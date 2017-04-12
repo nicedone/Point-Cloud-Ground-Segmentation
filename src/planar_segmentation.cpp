@@ -8,35 +8,38 @@
 #include <pcl/visualization/cloud_viewer.h>
 #include <pcl/filters/project_inliers.h>
 
-#include <string.h>
-#include <stdio.h>
-
+#include <string>
 #include <iostream>
 
-void savePCD(pcl::PointCloud<pcl::PointXYZRGB>::Ptr pointCloud,
-             char* fileName,
-             bool objectOrProj){
+#define PLANEERROR 0.01
+#define OBJECTHEIGHTMAX 0.3
+#define OBJECTHEIGHTMIN 0.0
 
-  char *name = new char[80];
-  strcpy(name, "");
+
+/* 
+   Wrapper Function for savePCDFileBinary
+   Saves Point Cloud into .pcd format
+ */
+void savePCD(pcl::PointCloud<pcl::PointXYZRGB>::Ptr pointCloud,
+             std::string& path,
+             const std::string& newExt){
+
+  std::string::size_type i = path.rfind('.', path.length());
   // Boolean used for determining if point cloud is of object or of
   // object's projection.
-  if (objectOrProj) {
-    strcat(name,fileName);
-    strcat(name,"_obj.pcd");
-  }
-  else{
-    strcat(name,fileName);
-    strcat(name,"_proj.pcd");
-  }
-  printf("trying to saving point cloud to %s\n",name);
-  pcl::io::savePCDFileBinary (name, *pointCloud);
-  printf("saving point cloud to %s\n",name);
+  
+  path.replace(i, newExt.length(), newExt);
+  pcl::io::savePCDFileBinary (path, *pointCloud);
+  printf("saving point cloud to %s\n",path);
 
 }
        
-
-void viewPointCloud(pcl::PointCloud<pcl::PointXYZRGB>::Ptr pointCloud){
+/* 
+   Wrapper Function for CloudViewer
+   Used to view point cloud while code is running.
+ */
+void viewPointCloud(pcl::PointCloud<pcl::PointXYZRGB>::Ptr pointCloud)
+{
   pcl::visualization::CloudViewer pclViewer("Objects on table");
   pclViewer.showCloud(pointCloud);
   while (!pclViewer.wasStopped())
@@ -45,6 +48,11 @@ void viewPointCloud(pcl::PointCloud<pcl::PointXYZRGB>::Ptr pointCloud){
   }
 }
 
+/* 
+  Finds plane models in point cloud.
+  coefficients: stores plane function
+  planeIndices: stores points that lie on the newly found plane
+ */
 void planeSeg(pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud,
               pcl::ModelCoefficients::Ptr coefficients,
               pcl::PointIndices::Ptr planeIndices)
@@ -53,12 +61,14 @@ void planeSeg(pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud,
   segmentation.setInputCloud(cloud);
   segmentation.setModelType(pcl::SACMODEL_PLANE);
   segmentation.setMethodType(pcl::SAC_RANSAC);
-  segmentation.setDistanceThreshold(0.01f);
+  segmentation.setDistanceThreshold(PLANEERROR);
   segmentation.setOptimizeCoefficients(true);
   segmentation.segment(*planeIndices, *coefficients);
-  printf("num_points: %d\n",planeIndices->indices.size());
 }
 
+/*
+  Projects object points onto tabletop plane defined in coefficients
+ */
 void projectPoints(pcl::PointCloud<pcl::PointXYZRGB>::Ptr proj_cloud,
                    pcl::ModelCoefficients::Ptr coefficients,
                    pcl::PointCloud<pcl::PointXYZRGB>::Ptr plane)
@@ -70,14 +80,19 @@ void projectPoints(pcl::PointCloud<pcl::PointXYZRGB>::Ptr proj_cloud,
   proj.filter (*proj_cloud);
 }
 
+
+/*
+  Removes either the points on the plane from the entire point cloud
+  or only keeps the points on the plane. This distinction is defined
+  by setNeg (true deletes points on the plane).
+ */
 void removePlane(pcl::PointCloud<pcl::PointXYZRGB>::Ptr outCloud,
                  pcl::PointCloud<pcl::PointXYZRGB>::Ptr inputCloud,
                  pcl::PointIndices::Ptr cloudIndices,
                  bool setNeg)
 {
   pcl::ExtractIndices<pcl::PointXYZRGB> extract;
-  if (setNeg) extract.setNegative(true);
-  else extract.setNegative(false);
+  extract.setNegative(setNeg);
   extract.setInputCloud(inputCloud);
   extract.setIndices(cloudIndices);
   extract.filter(*outCloud);
@@ -129,7 +144,7 @@ int main(int argc, char** argv)
 
     // First parameter: minimum Z value. Set to 0, segments objects lying on the plane (can be negative).
     // Second parameter: maximum Z value. Tune it to the expected height of the object.
-    prism.setHeightLimits(0.0f, 0.3f);
+    prism.setHeightLimits(OBJECTHEIGHTMIN, OBJECTHEIGHTMAX);
     pcl::PointIndices::Ptr objectIndices(new pcl::PointIndices);
 
     prism.segment(*objectIndices);
@@ -139,27 +154,26 @@ int main(int argc, char** argv)
   }
     
   // Perform second planar segmentation
-  // TODO: WHY DO I NEED TO DO PLANE SEGMENTATION AGAIN
   planeSeg(objects,plane_coef,planeIndices);
   
   /* Remove Floor Plane from Point Cloud */
   removePlane(plane, objects, planeIndices, true);
 
   /* Save point cloud of object */
-  savePCD(plane,argv[1],true);
+  std::string path = argv[1];
+  savePCD(plane,path,"_obj.pcd");
+
+  /* uncomment to view point cloud while code is running */
   //viewPointCloud(plane);
 
   /* Project Object Points to Tabletop plane 2 */
   projectPoints(cloud_projected, plane_coef, plane);
   
   /* Save point cloud of projection */
-  savePCD(cloud_projected,argv[1],false);
+  path = argv[1];
+  savePCD(cloud_projected,path,"_proj.pcd");
+  
+  /* uncomment to view point cloud while code is running */
   //viewPointCloud(cloud_projected);
   
-
-  /*init_cloud.clear();
-  *plane.clear();
-  *convexHull.clear();
-  *objects.clear();
-  *cloud_projected.clear();*/
 }
